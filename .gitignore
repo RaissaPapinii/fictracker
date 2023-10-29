@@ -2,3 +2,6 @@
 .git/
 __pycache__/
 cogs/__pycache__/
+.dockerignore
+Dockerfile
+fly.toml
