@@ -446,8 +446,8 @@ class tracker(commands.Cog):
                 return user == ctx.user and str(reaction.emoji) in ["◀️", "▶️"]
 
             while True:
+                reaction, user = await self.bot.wait_for("reaction_add", timeout=1200, check=check)
                 try:
-                    reaction, user = await self.bot.wait_for("reaction_add", timeout=1200, check=check)
                     if str(reaction.emoji) == "▶️" and cur_page != pages:
                         cur_page += 1
                         await message.edit(content=f'Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
