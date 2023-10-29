@@ -5,7 +5,6 @@ from discord.app_commands import Choice
 import requests
 from bs4 import BeautifulSoup
 from messages import (SHOW_QUERY, LIST_QUERY, INFO_CONTENT, HELP_DESCRIPTION1, HELP_DESCRIPTION2, HELP_DESCRIPTION3, HELP_DESCRIPTION4, HELP_DESCRIPTION5)
-from dotenv import load_dotenv
 import os
 import asyncio
 
@@ -69,7 +68,6 @@ class tracker(commands.Cog):
 
     @app_commands.command(description="Suggest something that you'd like to see here.")
     async def suggest(self, ctx:discord.Interaction, message:str = None):
-        load_dotenv()
         user = await self.bot.fetch_user(os.getenv('OWNER_ID'))
         if message == None:
             await ctx.response.send_message('Please write your suggestion after the /suggest!')

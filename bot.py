@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
 from messages import (CREATE_TABLES)
 import asyncpg
 import os
@@ -17,7 +16,7 @@ class FicTracker(commands.Bot):
         )
 
     async def create_db_pool(self):
-        bot.db = await asyncpg.create_pool(DATABASE)#database='fictracker', user=USER, password=DB_PASSWORD)
+        bot.db = await asyncpg.create_pool(DATABASE)
 
 
     async def setup_hook(self):
@@ -40,10 +39,7 @@ class FicTracker(commands.Bot):
         await bot.db.execute(CREATE_TABLES)
     
 
-load_dotenv()
 TOKEN = os.getenv('TOKEN')
-#DB_PASSWORD = os.getenv('DB_PASSWORD')
-#USER = os.getenv('DB_USERNAME')
 DATABASE = os.getenv('DATABASE')
 CLIENT_ID = os.getenv('CLIENT_ID')
 
