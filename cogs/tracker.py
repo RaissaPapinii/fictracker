@@ -77,7 +77,6 @@ class tracker(commands.Cog):
 
     @app_commands.command(description="Explain an error you've found.")
     async def error(self, ctx:discord.Interaction, message:str = None):
-        load_dotenv()
         user = await self.bot.fetch_user(os.getenv('OWNER_ID'))
         if message == None:
             await ctx.response.send_message('Please describe the error after the /error!')
