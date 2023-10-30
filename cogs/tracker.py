@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 from messages import (SHOW_QUERY, LIST_QUERY, INFO_CONTENT, HELP_DESCRIPTION1, HELP_DESCRIPTION2, HELP_DESCRIPTION3, HELP_DESCRIPTION4, HELP_DESCRIPTION5)
 import os
+import re
 import asyncio
 
 
@@ -112,7 +113,7 @@ class tracker(commands.Cog):
             return '-' 
            
     async def get_fic_id(self, url):
-        return int(url.split('works/')[1].split('/')[0])
+        return int(re.findall(r"(?<=/works/)[\d]+", url)[0])
 
     async def update_fic_db(self, fic_id, pb_chapters, total_chapters, completed):
         await self.bot.db.execute('UPDATE "Fic" SET published_chapters=$1, total_chapters=$2, completed=$3 WHERE id=$4', pb_chapters, total_chapters, completed, fic_id)
@@ -403,7 +404,8 @@ class tracker(commands.Cog):
         for fic in fics:
             await self.update_fic(ctx, fic['fic_id'], fic['link'])
             title = await self.get_embed_title(fic['name'], fic['authors'])
-            publishing_info = fic['classification']+'  |  '+str(fic['published_chapters'])+'/'+str(fic['total_chapters'])
+            total_chapters = str(fic['total_chapters']) if fic['total_chapters']>0 else '?'
+            publishing_info = fic['classification']+'  |  '+str(fic['published_chapters'])+'/'+total_chapters
             last_ch_info = await self.get_embed_chapter(fic['last_ch_name'], fic['last_chapter'])
             next_ch_info = await self.get_embed_chapter(fic['next_ch_name'], fic['next_chapter'])
             status_embed = ('TBR' if fic['status']=='tbr' else fic['status'].capitalize())
@@ -426,7 +428,8 @@ class tracker(commands.Cog):
     async def show(self, ctx:discord.Interaction, status:str):
         guild = ctx.guild.id
         fics = await self.get_fics(status, guild)
-        if len(fics)>0:
+        fics_total = len(fics)
+        if fics_total>0:
             await ctx.response.defer()
 
             cur_page=1
@@ -436,7 +439,7 @@ class tracker(commands.Cog):
             embeds_paged = self.chunker(embeds_paged, items)
             
             #Send first page
-            await ctx.followup.send(content=f'Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
+            await ctx.followup.send(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
             message = await ctx.original_response()
             await message.add_reaction("◀️")
             await message.add_reaction("▶️")
