@@ -67,21 +67,23 @@ class tracker(commands.Cog):
         await ctx.response.send_message(INFO_CONTENT)
 
     @app_commands.command(description="Suggest something that you'd like to see here.")
-    async def suggest(self, ctx:discord.Interaction, message:str = None):
-        user = await self.bot.fetch_user(os.getenv('OWNER_ID'))
+    async def suggest(self, ctx:discord.Interaction, message:str):
+        await self.bot.wait_until_ready()
+        channel = self.bot.get_channel(int(os.getenv('SUGGESTION_CHANNEL')))
         if message == None:
             await ctx.response.send_message('Please write your suggestion after the /suggest!')
         else:
-            await user.send("SUGGESTION\n"+message)
+            await channel.send("SUGGESTION\n"+message)
             await ctx.response.send_message('Suggestion sent! Thank you for your contribution :)')
 
     @app_commands.command(description="Explain an error you've found.")
-    async def error(self, ctx:discord.Interaction, message:str = None):
-        user = await self.bot.fetch_user(os.getenv('OWNER_ID'))
+    async def error(self, ctx:discord.Interaction, message:str):
+        await self.bot.wait_until_ready()
+        channel = self.bot.get_channel(int(os.getenv('ERROR_CHANNEL')))
         if message == None:
             await ctx.response.send_message('Please describe the error after the /error!')
         else:
-            await user.send("BUG\n"+message)
+            await channel.send("BUG\n"+message)
             await ctx.response.send_message('Error sent! Thank you for your contribution :)')
 
     async def get_update_fic_metadata(self, soup):
