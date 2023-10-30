@@ -452,11 +452,11 @@ class tracker(commands.Cog):
                 try:
                     if str(reaction.emoji) == "▶️" and cur_page != pages:
                         cur_page += 1
-                        await message.edit(content=f'Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
+                        await message.edit(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
                         await message.remove_reaction(reaction, user)
                     elif str(reaction.emoji) == "◀️" and cur_page > 1:
                         cur_page -= 1
-                        await message.edit(content=f'Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
+                        await message.edit(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
                         await message.remove_reaction(reaction, user)
                     else:
                         await message.remove_reaction(reaction, user)
