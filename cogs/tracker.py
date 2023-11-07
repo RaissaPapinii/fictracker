@@ -8,6 +8,7 @@ from messages import (SHOW_QUERY, LIST_QUERY, INFO_CONTENT, HELP_DESCRIPTION1, H
 import os
 import re
 import asyncio
+import traceback
 
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (iPad; CPU OS 12_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'}
@@ -21,8 +22,7 @@ class tracker(commands.Cog):
         embed = discord.Embed(title="Commands", colour=discord.Colour(0x4a90e2), description=content)
         embed.set_author(name=f"Page {cur_page}/5")
         return embed
-
-    
+  
     @app_commands.command(description='Understand the commands')
     async def help(self, ctx:discord.Interaction):
         pages = 5
@@ -77,14 +77,17 @@ class tracker(commands.Cog):
             await channel.send("SUGGESTION\n"+message)
             await ctx.response.send_message('Suggestion sent! Thank you for your contribution :)')
 
-    @app_commands.command(description="Explain an error you've found.")
-    async def error(self, ctx:discord.Interaction, message:str):
+    async def send_error(self, message):
         await self.bot.wait_until_ready()
         channel = self.bot.get_channel(int(os.getenv('ERROR_CHANNEL')))
+        await channel.send(message)
+
+    @app_commands.command(description="Explain an error you've found.")
+    async def error(self, ctx:discord.Interaction, message:str):
         if message == None:
             await ctx.response.send_message('Please describe the error after the /error!')
         else:
-            await channel.send("BUG\n"+message)
+            await self.send_error("BUG\n"+message)
             await ctx.response.send_message('Error sent! Thank you for your contribution :)')
 
     async def get_update_fic_metadata(self, soup):
@@ -111,8 +114,18 @@ class tracker(commands.Cog):
             return next_chapter
         else:
             return '-' 
-           
-    async def get_fic_id(self, url):
+
+    async def get_full_url(self, url):
+        soup = await self.get_soup(url)
+        full_url = soup.find('h3', attrs={'class':'title'}).find('a', href=True)
+        full_url = full_url['href']
+        if full_url.startswith("/works/"):
+            full_url = "https://archiveofourown.org/"+full_url
+        return full_url
+
+    async def get_fic_id(self, url:str):
+        if url.startswith('https://archiveofourown.org/chapters/'):
+            url = await self.get_full_url(url)
         return int(re.findall(r"(?<=/works/)[\d]+", url)[0])
 
     async def update_fic_db(self, fic_id, pb_chapters, total_chapters, completed):
@@ -137,18 +150,25 @@ class tracker(commands.Cog):
         next_name = await self.get_chapter(next_ch, ctx)
         await self.bot.db.execute('INSERT INTO "Tracker" (guild_id, fic_id, status, last_chapter, next_chapter, updated_at, last_ch_name, next_ch_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);',guild_id, fic_id, status, last_ch, next_ch, tmp, last_name, next_name)
 
-    async def get_soup(self, url, ctx):
+    async def get_soup(self, url, ctx=None):
         #Get the html from the url to scrape the fic metadata
         try:
             response = requests.get(url, headers=HEADERS)
             soup = BeautifulSoup(response.text, "html.parser")
             return soup
         except Exception as e:
-            await ctx.response.send_message(f"An error occurred: {e}")
+            if ctx:
+                await ctx.response.send_message(f"An error occurred")
+            
+            await self.send_error(f"BUG\nGetting Soup\n getting soup:\n {type(e)(traceback.format_exc())}")
+
             return None
-        
-    async def get_root_url(self, url):
-        return url.split('/chapters')[0]
+    
+    async def get_first_chapter(self, url, soup):
+        ch_index = soup.find('select', attrs={'name':'selected_id'})
+        first_ch = ch_index.find('option')['value']
+        root = re.findall(r"[\w:./]+/works/\d+", url)[0]
+        return root+'/chapters/'+first_ch
             
     async def get_main_pairing(self, soup):
         pairing = soup.find('dd', attrs={'class' : 'relationship tags'}).find('ul', attrs={'class':'commas'})
@@ -160,19 +180,34 @@ class tracker(commands.Cog):
         title, authors, pb_chapters, total_chapters, completed = await self.get_fic_metadata(soup)
         check_fic = await self.bot.db.fetch('SELECT * FROM "Fic" WHERE id = $1', fic_id)
         if len(check_fic)<1:
-            root_url = await self.get_root_url(url)
+            if total_chapters==1:
+                root_url = url
+            else:
+                root_url = await self.get_first_chapter(url, soup)
             main_pairing = await self.get_main_pairing(soup)
             await self.add_fic(fic_id, root_url, title, authors, pb_chapters, total_chapters, completed, main_pairing)
         else:
             await self.update_fic_db(fic_id, pb_chapters, total_chapters, completed)
-        return title
-    
+        return title, total_chapters
+
     async def update_fic(self, ctx, fic_id, url):
         soup = await self.get_soup(url, ctx)
         if soup:
-            pb_chapters, total_chapters, completed = await self.get_update_fic_metadata(soup)
-            await self.update_fic_db(fic_id, pb_chapters, total_chapters, completed)
-  
+            try:
+                pb_chapters, total_chapters, completed = await self.get_update_fic_metadata(soup)
+                await self.update_fic_db(fic_id, pb_chapters, total_chapters, completed)
+            except:
+                try:
+                    first_ch = await self.get_first_chapter(url, soup)
+                    await self.db.execute('UPDATE FROM "Fic" SET link=$1 WHERE id=$2', first_ch, fic_id)
+
+                    #Retrying to update
+                    new_soup = await self.get_soup(first_ch, ctx)
+                    pb_chapters, total_chapters, completed = await self.get_update_fic_metadata(new_soup)
+                    await self.update_fic_db(fic_id, pb_chapters, total_chapters, completed)
+                except:
+                    await self.send_error(f"BUG\nUPDATE FIC\n Fanfic id={fic_id} couldn't be updated!")
+                  
     @app_commands.command(description='Add a fic to one of your lists.')
     @app_commands.choices(status=[
         Choice(name='TBR', value='tbr'),
@@ -193,15 +228,22 @@ class tracker(commands.Cog):
             return
         soup = await self.get_soup(url, ctx)
         if soup:
-            title = await self.manage_fic(fic_id, url, soup)
-            if status=='tbr':
-                next_ch = await self.get_root_url(url)
+            try:
+                title, total_ch = await self.manage_fic(fic_id, url, soup)
+                if status=='tbr':
+                    if total_ch==1:
+                        next_ch = url
+                    else:
+                        next_ch = await self.get_first_chapter(url, soup)
+                else:
+                    next_ch = await self.get_next_chapter(soup)
+                await self.add_tracker(guild, fic_id, status, url, next_ch, ctx.created_at, ctx)
+            except Exception as e:
+                await self.send_error(f'BUG\nManaging and Adding Fic\n{type(e)(traceback.format_exc())}')
             else:
-                next_ch = await self.get_next_chapter(soup)
-            await self.add_tracker(guild, fic_id, status, url, next_ch, ctx.created_at, ctx)
-            await ctx.followup.send(f"You're tracking {title} now!")
-            if status=='read':
-                await self.bot.db.execute('INSERT INTO "ReadFics"(guild_id, fic_id, value) VALUES ($1, $2, 1);', guild, fic_id)
+                await ctx.followup.send(f"You're tracking {title} now!")
+                if status=='read':
+                    await self.bot.db.execute('INSERT INTO "ReadFics"(guild_id, fic_id, value) VALUES ($1, $2, 1);', guild, fic_id)
             
     @app_commands.command(description="Set a TBR fic to Reading. (The URL sent must be of the last chapter you'd read)")
     async def start(self, ctx:discord.Interaction, url:str):
@@ -345,7 +387,8 @@ class tracker(commands.Cog):
             if len(tracker)<1:
                 await ctx.followup.send(f"It seems you still don't have an open track for this fic. Please add one by using the /add command.\nExample: /add reading {url}")
             else:
-                root_url = await self.get_root_url(url)
+                soup = await self.get_soup(url, ctx)
+                root_url = await self.get_first_chapter(url, soup)
                 await self.bot.db.execute('UPDATE "Tracker" SET last_chapter=$1, next_chapter=$2, updated_at=$3, last_ch_name=0, next_ch_name=1 WHERE id=$4', '-', root_url, ctx.created_at, tracker[0]['id'])
                 await ctx.followup.send(f'You just restarted {title[0]["name"]}!')
 
@@ -363,7 +406,8 @@ class tracker(commands.Cog):
             if len(tracker)<1:
                 await ctx.followup.send(f"It seems you still don't have a closed track for this fic. Please add one by using the /finish command.\nExample: /finish {url}")
             else:
-                root_url = await self.get_root_url(url)
+                soup = await self.get_soup(url)
+                root_url = await self.get_first_chapter(url, soup)
                 await self.bot.db.execute('UPDATE "Tracker" SET last_chapter=$1, next_chapter=$2, status=$3, updated_at=$4 WHERE id=$5', '-', root_url, 'rereading', ctx.created_at, tracker[0]['id'])
                 await ctx.followup.send(f'You just started rereading {title[0]["name"]}!')
 
@@ -402,16 +446,21 @@ class tracker(commands.Cog):
     async def get_embeds_list(self, ctx, fics):
         embeds = []
         for fic in fics:
-            await self.update_fic(ctx, fic['fic_id'], fic['link'])
-            title = await self.get_embed_title(fic['name'], fic['authors'])
-            total_chapters = str(fic['total_chapters']) if fic['total_chapters']>0 else '?'
-            publishing_info = fic['classification']+'  |  '+str(fic['published_chapters'])+'/'+total_chapters
-            last_ch_info = await self.get_embed_chapter(fic['last_ch_name'], fic['last_chapter'])
-            next_ch_info = await self.get_embed_chapter(fic['next_ch_name'], fic['next_chapter'])
-            status_embed = ('TBR' if fic['status']=='tbr' else fic['status'].capitalize())
-            description = f'{status_embed}   |   {fic["main_pairing"]}'
-            embed = await self.get_embed(description, title, publishing_info, last_ch_info, next_ch_info, status_embed)
-            embeds.append(embed)
+            try:
+                await self.update_fic(ctx, fic['fic_id'], fic['link'])
+                title = await self.get_embed_title(fic['name'], fic['authors'])
+                total_chapters = str(fic['total_chapters']) if fic['total_chapters']>0 else '?'
+                publishing_info = fic['classification']+'  |  '+str(fic['published_chapters'])+'/'+total_chapters
+                last_ch_info = await self.get_embed_chapter(fic['last_ch_name'], fic['last_chapter'])
+                next_ch_info = await self.get_embed_chapter(fic['next_ch_name'], fic['next_chapter'])
+                status_embed = ('TBR' if fic['status']=='tbr' else fic['status'].capitalize())
+                description = f'{status_embed}   |   {fic["main_pairing"]}'
+                embed = await self.get_embed(description, title, publishing_info, last_ch_info, next_ch_info, status_embed)
+                embeds.append(embed)
+            except Exception as e:
+                err = str(type(e)(traceback.format_exc() + f'Happened in Fic: {fic["name"]}\nObject: {fic}'))
+                await self.send_error("BUG\nCommand Show - Getting Embeds\n"+err)
+                pass
         return embeds
 
     def chunker(self, seq, size):
@@ -432,37 +481,40 @@ class tracker(commands.Cog):
         if fics_total>0:
             await ctx.response.defer()
 
-            cur_page=1
-            items = 3
-            pages = -(-len(fics) // items)
-            embeds_paged = await self.get_embeds_list(ctx, fics)
-            embeds_paged = self.chunker(embeds_paged, items)
-            
-            #Send first page
-            await ctx.followup.send(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
-            message = await ctx.original_response()
-            await message.add_reaction("◀️")
-            await message.add_reaction("▶️")
-            
-            def check(reaction, user):
-                return user == ctx.user and str(reaction.emoji) in ["◀️", "▶️"]
+            try:
+                cur_page=1
+                items = 3
+                pages = -(-len(fics) // items)
+                embeds_paged = await self.get_embeds_list(ctx, fics)
+                embeds_paged = self.chunker(embeds_paged, items)
+            except Exception as e:
+                await ctx.followup.send('An error occurred while requesting your fanfics. The problem was already sent to our team.')
+                await self.send_error("BUG\nCommand Show - Getting Embeds\n"+traceback.format_exc())
+            else:
+                await ctx.followup.send(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
+                message = await ctx.original_response()
+                await message.add_reaction("◀️")
+                await message.add_reaction("▶️")
+                
+                def check(reaction, user):
+                    return user == ctx.user and str(reaction.emoji) in ["◀️", "▶️"]
 
-            while True:
-                reaction, user = await self.bot.wait_for("reaction_add", timeout=1200, check=check)
-                try:
-                    if str(reaction.emoji) == "▶️" and cur_page != pages:
-                        cur_page += 1
-                        await message.edit(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
+                while True:
+                    reaction, user = await self.bot.wait_for("reaction_add", timeout=600, check=check)
+                    try:
+                        if str(reaction.emoji) == "▶️" and cur_page != pages:
+                            cur_page += 1
+                            await message.edit(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
+                            await message.remove_reaction(reaction, user)
+                        elif str(reaction.emoji) == "◀️" and cur_page > 1:
+                            cur_page -= 1
+                            await message.edit(content=f'Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
+                            await message.remove_reaction(reaction, user)
+                        else:
+                            await message.remove_reaction(reaction, user)
+                    except asyncio.TimeoutError:
                         await message.remove_reaction(reaction, user)
-                    elif str(reaction.emoji) == "◀️" and cur_page > 1:
-                        cur_page -= 1
-                        await message.edit(content=f'{fics_total} fics found! Page {cur_page}/{pages}', embeds=embeds_paged[cur_page-1])
-                        await message.remove_reaction(reaction, user)
-                    else:
-                        await message.remove_reaction(reaction, user)
-                except asyncio.TimeoutError:
-                    await message.remove_reaction(reaction, user)
-                    break
+                        break
         else:
             await ctx.response.send_message('It were not found any fics!')
 #quantidade de palavras
