@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.app_commands import Choice
 import requests
 from bs4 import BeautifulSoup
-from messages import (SHOW_QUERY, LIST_QUERY, INFO_CONTENT, HELP_DESCRIPTION1, HELP_DESCRIPTION2, HELP_DESCRIPTION3, HELP_DESCRIPTION4, HELP_DESCRIPTION5)
+from messages import (SHOW_QUERY, LIST_QUERY, LIST_TRACKER, INFO_CONTENT, HELP_DESCRIPTION1, HELP_DESCRIPTION2, HELP_DESCRIPTION3, HELP_DESCRIPTION4, HELP_DESCRIPTION5)
 import os
 import re
 import asyncio
@@ -190,21 +190,26 @@ class tracker(commands.Cog):
             await self.update_fic_db(fic_id, pb_chapters, total_chapters, completed)
         return title, total_chapters
 
+    async def update_tracker(self, tracker_id, next_chapter, next_ch_name):
+        await self.bot.db.execute('UPDATE "Tracker" SET next_chapter=$1, next_ch_name=$2 WHERE id=$3', next_chapter, next_ch_name, tracker_id)
+
     async def update_fic(self, ctx, fic_id, url):
         soup = await self.get_soup(url, ctx)
         if soup:
             try:
                 pb_chapters, total_chapters, completed = await self.get_update_fic_metadata(soup)
                 await self.update_fic_db(fic_id, pb_chapters, total_chapters, completed)
+                return pb_chapters, total_chapters, completed
             except:
                 try:
                     first_ch = await self.get_first_chapter(url, soup)
-                    await self.db.execute('UPDATE FROM "Fic" SET link=$1 WHERE id=$2', first_ch, fic_id)
+                    await self.bot.db.execute('UPDATE FROM "Fic" SET link=$1 WHERE id=$2', first_ch, fic_id)
 
                     #Retrying to update
                     new_soup = await self.get_soup(first_ch, ctx)
                     pb_chapters, total_chapters, completed = await self.get_update_fic_metadata(new_soup)
                     await self.update_fic_db(fic_id, pb_chapters, total_chapters, completed)
+                    return pb_chapters, total_chapters, completed
                 except:
                     await self.send_error(f"BUG\nUPDATE FIC\n Fanfic id={fic_id} couldn't be updated!")
                   
@@ -443,11 +448,33 @@ class tracker(commands.Cog):
             return await self.bot.db.fetch(SHOW_QUERY, guild_id)
         return await self.bot.db.fetch(LIST_QUERY, guild_id, status)
 
+    async def update_wip(self, fic, ctx):
+        try:
+            pb_chapters, _, _ = await self.update_fic(ctx, fic['fic_id'], fic['link'])
+
+            if (fic['next_ch_name']==0) and (fic['last_ch_name']<pb_chapters):
+                soup = await self.get_soup(fic['last_chapter'])
+                next_ch = await self.get_next_chapter(soup)
+                next_ch_name = fic['last_ch_name']+1
+                await self.update_tracker(fic['id'], next_ch, next_ch_name)
+
+                fic = await self.bot.db.fetch(LIST_TRACKER, fic['id'])
+            return fic
+        except Exception as e:
+            err = str(type(e)(traceback.format_exc() + f'Happened in Fic: {fic["name"]}\nObject: {fic}'))
+            await self.send_error("BUG\nCommand Show - Updating Fic\n"+err)
+            pass
+
     async def get_embeds_list(self, ctx, fics):
         embeds = []
         for fic in fics:
+                
+            if fic['classification']=='WIP':
+                fic = await self.update_wip(fic, ctx)
+                if not fic:
+                    continue
+
             try:
-                await self.update_fic(ctx, fic['fic_id'], fic['link'])
                 title = await self.get_embed_title(fic['name'], fic['authors'])
                 total_chapters = str(fic['total_chapters']) if fic['total_chapters']>0 else '?'
                 publishing_info = fic['classification']+'  |  '+str(fic['published_chapters'])+'/'+total_chapters
@@ -458,8 +485,8 @@ class tracker(commands.Cog):
                 embed = await self.get_embed(description, title, publishing_info, last_ch_info, next_ch_info, status_embed)
                 embeds.append(embed)
             except Exception as e:
-                err = str(type(e)(traceback.format_exc() + f'Happened in Fic: {fic["name"]}\nObject: {fic}'))
-                await self.send_error("BUG\nCommand Show - Getting Embeds\n"+err)
+                err = str(type(e)(traceback.format_exc()))
+                await self.send_error("BUG\nCommand Show - Getting Embeds\n"+err+ f'\nHappened in Fic: {fic["name"]}\nObject: {fic}')
                 pass
         return embeds
 

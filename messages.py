@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS public."ReadFics"
 '''
 SHOW_QUERY = '''
     SELECT
+        t.id,
         t.status,
         t.fic_id,
         f.link,
@@ -60,6 +61,7 @@ SHOW_QUERY = '''
 
 LIST_QUERY = '''
     SELECT
+        t.id,
         t.status,
         t.fic_id,
         f.link,
@@ -81,6 +83,31 @@ LIST_QUERY = '''
         INNER JOIN "Fic" AS f ON t.fic_id=f.id
     WHERE t.guild_id=$1 AND t.status=$2
     ORDER BY t.updated_at DESC
+'''
+
+LIST_TRACKER = '''
+    SELECT
+        t.id,
+        t.status,
+        t.fic_id,
+        f.link,
+        f.name,
+        f.authors,
+        f.main_pairing,
+        CASE
+            WHEN f.completed=False THEN 'WIP'
+            WHEN f.total_chapters=1 THEN 'One-Shot'
+            ELSE 'Completed'
+        END classification,
+        f.published_chapters,
+        f.total_chapters,
+        t.last_ch_name,
+        t.last_chapter,
+        t.next_ch_name,
+        t.next_chapter
+    FROM "Tracker" AS t
+        INNER JOIN "Fic" AS f ON t.fic_id=f.id
+    WHERE t.id=$1
 '''
 
 INFO_CONTENT = '''This bot uses the concept of _lists_ to keep tracking of your fanfics, being the lists: **TBR**, **Reading**, **Read**, and **Rereading**.
